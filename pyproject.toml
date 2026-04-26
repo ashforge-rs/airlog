@@ -73,6 +73,9 @@ ignore = [
 "tests/**" = [
     "S101", # assert is idiomatic in pytest tests
 ]
+"src/airlog/testing.py" = [
+    "S101", # assert is idiomatic in pytest compliance test base classes
+]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 12
