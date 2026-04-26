@@ -115,8 +115,8 @@ class LoggingAdapter(AuditStream):
     def supports_feature(self, feature: StreamFeature) -> bool:
         """Return capability flags for the logging adapter.
 
-        Only :attr:`~airlog.interfaces.StreamFeature.ASYNC` is unsupported
-        (the adapter uses the default ``asyncio.to_thread`` bridge).
+        Returns ``False`` for all features.  The adapter has no native query,
+        replay, retention, batching, or async capabilities.
 
         Args:
             feature: The feature to query.

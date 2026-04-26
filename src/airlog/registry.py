@@ -156,11 +156,10 @@ async def aemit(
     event: AuditEvent,
     backends: BackendFilter = None,
 ) -> dict[str, bool]:
-    """Asynchronously emit *event* to registered backends.
+    """Asynchronously emit *event* to registered backends concurrently.
 
-    Awaits :meth:`~airlog.interfaces.AuditStream.aemit` for each selected
-    backend (sequentially; use :func:`asyncio.gather` externally for
-    concurrent fan-out if needed).
+    Uses :func:`asyncio.gather` to fan out to all selected backends in
+    parallel, so slow backends do not block faster ones.
 
     Args:
         event: The :class:`~airlog.interfaces.AuditEvent` to emit.
@@ -172,13 +171,20 @@ async def aemit(
     """
     snapshot = list_backends()
     selected = _select_backends(backends, snapshot)
-    results: dict[str, bool] = {}
-    for name, stream in selected:
+    if not selected:
+        return {}
+
+    names = [name for name, _ in selected]
+    streams = [stream for _, stream in selected]
+
+    async def _safe_aemit(stream: AuditStream) -> bool:
         try:
-            results[name] = await stream.aemit(event)
+            return await stream.aemit(event)
         except Exception:
-            results[name] = False
-    return results
+            return False
+
+    outcomes = await asyncio.gather(*(_safe_aemit(s) for s in streams))
+    return dict(zip(names, outcomes, strict=True))
 
 
 def emit_sync_or_async(
