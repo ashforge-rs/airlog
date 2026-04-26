@@ -58,10 +58,24 @@ select = [
     "B",   # flake8-bugbear
     "SIM", # flake8-simplify
     "ANN", # flake8-annotations
+    "S",   # flake8-bandit (security)
+    "C90", # mccabe complexity
+    "N",   # pep8-naming
+    "RUF", # ruff-specific rules
+    "T20", # flake8-print (no print statements)
 ]
 ignore = [
     "ANN401", # Any is intentionally used for flexible sink/context kwargs
+    "RUF002", # EN DASH used intentionally in docstrings for typographic clarity
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101", # assert is idiomatic in pytest tests
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
 
 [tool.ruff.lint.isort]
 known-first-party = ["airlog"]

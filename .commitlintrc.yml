@@ -1,0 +1,20 @@
+# Conventional Commits rule set
+# See https://www.conventionalcommits.org/ and https://commitlint.js.org/
+extends:
+  - "@commitlint/config-conventional"
+
+rules:
+  # Enforce a maximum header (subject) length of 100 characters
+  header-max-length:
+    - 2
+    - always
+    - 100
+  # Enforce lowercase type (feat, fix, chore, …)
+  type-case:
+    - 2
+    - always
+    - lower-case
+  # Disallow empty commit subject lines
+  subject-empty:
+    - 2
+    - never
