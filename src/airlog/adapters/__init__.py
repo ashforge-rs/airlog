@@ -22,9 +22,11 @@ be available at ``airlog.LoguruAuditStream`` for backward compatibility.
 from __future__ import annotations
 
 from airlog.adapters.logging_adapter import LoggingAdapter
+from airlog.adapters.ocsf_adapter import OcsfStream
 from airlog.adapters.opentelemetry_adapter import OpenTelemetryAdapter
 
 __all__ = [
     "LoggingAdapter",
+    "OcsfStream",
     "OpenTelemetryAdapter",
 ]

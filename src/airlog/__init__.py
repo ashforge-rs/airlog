@@ -24,6 +24,7 @@ Quick-start::
 from __future__ import annotations
 
 from airlog.adapters.logging_adapter import LoggingAdapter
+from airlog.adapters.ocsf_adapter import OcsfStream
 from airlog.adapters.opentelemetry_adapter import OpenTelemetryAdapter
 from airlog.interfaces import AuditEvent, AuditStream, HealthStatus, Principal, StreamFeature
 from airlog.loguru_handler import LoguruAuditStream
@@ -33,6 +34,7 @@ from airlog.middleware import (
     EnrichmentMiddleware,
     RedactionMiddleware,
 )
+from airlog.ocsf_support import OcsfClass, OcsfSeverity
 from airlog.serialization import SerializationFormat
 
 __all__ = [
@@ -44,10 +46,12 @@ __all__ = [
     "HealthStatus",
     "LoggingAdapter",
     "LoguruAuditStream",
+    "OcsfClass",
+    "OcsfSeverity",
+    "OcsfStream",
     "OpenTelemetryAdapter",
     "Principal",
     "RedactionMiddleware",
     "SerializationFormat",
     "StreamFeature",
 ]
-

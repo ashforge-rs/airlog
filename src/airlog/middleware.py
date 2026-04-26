@@ -198,7 +198,7 @@ _DEFAULT_PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # US Social Security Numbers
     (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "[REDACTED-SSN]"),
     # Generic tokens / passwords in key=value style
-    (re.compile(r'(?i)(password|secret|token|api[_-]?key)\s*=\s*\S+'), r"\1=[REDACTED]"),
+    (re.compile(r"(?i)(password|secret|token|api[_-]?key)\s*=\s*\S+"), r"\1=[REDACTED]"),
 ]
 
 

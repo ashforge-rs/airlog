@@ -116,9 +116,7 @@ class BackendComplianceTest:
             t.join()
 
         seqs = sorted(e.sequence for e in events)
-        assert seqs == list(range(seqs[0], seqs[0] + n)), (
-            f"Gaps detected in sequences: {seqs}"
-        )
+        assert seqs == list(range(seqs[0], seqs[0] + n)), f"Gaps detected in sequences: {seqs}"
 
     # ------------------------------------------------------------------
     # Integrity
@@ -204,9 +202,7 @@ class BackendComplianceTest:
             return await stream.aemit(event)
 
         result = asyncio.run(_run())
-        assert isinstance(result, bool), (
-            f"aemit() returned {type(result)!r}, expected bool"
-        )
+        assert isinstance(result, bool), f"aemit() returned {type(result)!r}, expected bool"
 
     def test_aemit_accepts_valid_event(self, stream: AuditStream) -> None:
         """``aemit()`` must not raise for a well-formed event."""
