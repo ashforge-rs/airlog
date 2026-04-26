@@ -1,4 +1,4 @@
-"""Loguru-backed audit logger with JSON output."""
+"""Loguru-backed audit stream with JSON output."""
 
 from __future__ import annotations
 
@@ -7,23 +7,29 @@ from typing import Any
 
 from loguru import logger as _loguru_logger
 
-from airlog.interfaces import AuditEvent, AuditLogger
+from airlog.interfaces import AuditEvent, AuditStream
 
 
-class LoguruAuditLogger(AuditLogger):
-    """Audit logger that writes JSON-formatted records via *loguru*.
+class LoguruAuditStream(AuditStream):
+    """Audit stream that writes JSON-formatted records via *loguru*.
 
     By default a single sink is added to ``sys.stderr`` using loguru's
     built-in ``serialize=True`` option, which produces newline-delimited
     JSON records.  Supply *sink* and *level* to direct output elsewhere
-    (e.g. a file path or any file-like object).
+    (e.g. a file path, ``sys.stdout``, or any file-like object).
 
     Example::
 
-        from airlog.loguru_handler import LoguruAuditLogger
+        import sys
+        from airlog import LoguruAuditStream, Principal
 
-        audit = LoguruAuditLogger()
-        audit.log_action("login", actor="alice", resource="session")
+        stream = LoguruAuditStream(sink=sys.stdout)
+        stream.record(
+            "login",
+            principal=Principal(subject="alice", auth_method="password"),
+            resource="session",
+            correlation_id="req-abc123",
+        )
 
     Args:
         sink: Loguru sink destination.  Defaults to ``sys.stderr``.
@@ -38,23 +44,34 @@ class LoguruAuditLogger(AuditLogger):
         level: str = "INFO",
         **sink_kwargs: Any,
     ) -> None:
+        super().__init__()
         self._logger = _loguru_logger.bind()
         self._logger.remove()
         self._logger.add(sink, level=level, serialize=True, **sink_kwargs)
 
-    def log(self, event: AuditEvent) -> None:
-        """Serialize *event* and emit it as a JSON audit record.
+    def emit(self, event: AuditEvent) -> None:
+        """Serialize *event* and emit it as a newline-delimited JSON audit record.
+
+        All structured fields are stored under the loguru ``extra`` key so
+        that the full audit record is recoverable from the serialized JSON.
 
         Args:
             event: The audit event to record.
         """
         self._logger.info(
-            "audit",
+            "audit_event",
+            event_id=event.event_id,
+            sequence=event.sequence,
+            timestamp_ns=event.timestamp_ns,
+            timestamp=event.timestamp.isoformat(),
             action=event.action,
-            actor=event.actor,
+            principal_subject=event.principal.subject,
+            principal_auth_method=event.principal.auth_method,
+            principal_metadata=event.principal.metadata,
             resource=event.resource,
             resource_id=event.resource_id,
             outcome=event.outcome,
-            timestamp=event.timestamp.isoformat(),
-            **event.context,
+            correlation_id=event.correlation_id,
+            context=event.context,
+            checksum=event.checksum,
         )

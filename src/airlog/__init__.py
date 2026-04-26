@@ -1,6 +1,6 @@
-"""airlog – audit logging library."""
+"""airlog – compliance-grade audit logging library."""
 
-from airlog.interfaces import AuditEvent, AuditLogger
-from airlog.loguru_handler import LoguruAuditLogger
+from airlog.interfaces import AuditEvent, AuditStream, Principal
+from airlog.loguru_handler import LoguruAuditStream
 
-__all__ = ["AuditEvent", "AuditLogger", "LoguruAuditLogger"]
+__all__ = ["AuditEvent", "AuditStream", "LoguruAuditStream", "Principal"]
