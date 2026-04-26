@@ -1,6 +1,53 @@
-"""airlog – compliance-grade audit logging library."""
+"""airlog – compliance-grade audit logging library.
 
-from airlog.interfaces import AuditEvent, AuditStream, Principal
+One interface, swappable backends.
+
+Quick-start::
+
+    from airlog import AuditPipeline, LoggingAdapter, Principal
+    from airlog.middleware import EnrichmentMiddleware, RedactionMiddleware
+    import airlog.registry as registry
+
+    stream = LoggingAdapter()
+    pipeline = AuditPipeline(stream).add(RedactionMiddleware())
+    registry.register("default", pipeline)
+
+    event = pipeline.record(
+        "login",
+        principal=Principal(subject="alice", auth_method="password"),
+        resource="session",
+        correlation_id="req-abc123",
+    )
+    assert event.verify()
+"""
+
+from __future__ import annotations
+
+from airlog.adapters.logging_adapter import LoggingAdapter
+from airlog.adapters.opentelemetry_adapter import OpenTelemetryAdapter
+from airlog.interfaces import AuditEvent, AuditStream, HealthStatus, Principal, StreamFeature
 from airlog.loguru_handler import LoguruAuditStream
+from airlog.middleware import (
+    AuditMiddleware,
+    AuditPipeline,
+    EnrichmentMiddleware,
+    RedactionMiddleware,
+)
+from airlog.serialization import SerializationFormat
 
-__all__ = ["AuditEvent", "AuditStream", "LoguruAuditStream", "Principal"]
+__all__ = [
+    "AuditEvent",
+    "AuditMiddleware",
+    "AuditPipeline",
+    "AuditStream",
+    "EnrichmentMiddleware",
+    "HealthStatus",
+    "LoggingAdapter",
+    "LoguruAuditStream",
+    "OpenTelemetryAdapter",
+    "Principal",
+    "RedactionMiddleware",
+    "SerializationFormat",
+    "StreamFeature",
+]
+

@@ -1,0 +1,662 @@
+"""Tests for all new airlog enhancements.
+
+Covers:
+- HealthStatus / StreamFeature / health_check() / supports_feature() / aemit()
+- AuditEvent.to_dict() / to_ocsf()
+- AuditPipeline / middleware (Redaction, Enrichment)
+- LoggingAdapter / OpenTelemetryAdapter
+- Registry (register, deregister, list_backends, emit, aemit)
+- BackendComplianceTest base class
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+import threading
+
+import pytest
+
+import airlog.registry as registry
+from airlog import (
+    AuditEvent,
+    AuditPipeline,
+    AuditStream,
+    EnrichmentMiddleware,
+    HealthStatus,
+    LoggingAdapter,
+    Principal,
+    RedactionMiddleware,
+    SerializationFormat,
+    StreamFeature,
+)
+from airlog.testing import BackendComplianceTest
+
+_P = Principal(subject="test-user", auth_method="jwt")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+class _CapturingStream(AuditStream):
+    """Minimal in-memory AuditStream for testing."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.events: list[AuditEvent] = []
+
+    def emit(self, event: AuditEvent) -> None:
+        self.events.append(event)
+
+
+def _event(stream: AuditStream | None = None, **overrides: object) -> AuditEvent:
+    s = stream or _CapturingStream()
+    return s.record(  # type: ignore[return-value]
+        action=overrides.pop("action", "test_action"),  # type: ignore[arg-type]
+        principal=overrides.pop("principal", _P),  # type: ignore[arg-type]
+        resource=overrides.pop("resource", "test_resource"),  # type: ignore[arg-type]
+        **overrides,  # type: ignore[arg-type]
+    )
+
+
+# ===========================================================================
+# StreamFeature
+# ===========================================================================
+
+
+class TestStreamFeature:
+    def test_all_members_exist(self) -> None:
+        members = {f.name for f in StreamFeature}
+        assert members == {"QUERY", "REPLAY", "RETENTION", "BATCHING", "ASYNC"}
+
+    def test_supports_feature_default_false(self) -> None:
+        stream = _CapturingStream()
+        for feature in StreamFeature:
+            assert stream.supports_feature(feature) is False
+
+
+# ===========================================================================
+# HealthStatus
+# ===========================================================================
+
+
+class TestHealthStatus:
+    def test_healthy_fields(self) -> None:
+        hs = HealthStatus(healthy=True, latency_ms=1.5)
+        assert hs.healthy is True
+        assert hs.latency_ms == 1.5
+        assert hs.message == ""
+
+    def test_unhealthy_with_message(self) -> None:
+        hs = HealthStatus(healthy=False, latency_ms=0.0, message="connection refused")
+        assert hs.healthy is False
+        assert hs.message == "connection refused"
+
+    def test_health_check_default_returns_healthy(self) -> None:
+        stream = _CapturingStream()
+        status = stream.health_check()
+        assert isinstance(status, HealthStatus)
+        assert status.healthy is True
+        assert status.latency_ms >= 0.0
+        assert isinstance(status.message, str)
+
+
+# ===========================================================================
+# AuditEvent.to_dict
+# ===========================================================================
+
+
+class TestToDict:
+    def test_json_returns_dict(self) -> None:
+        ev = _event()
+        result = ev.to_dict(SerializationFormat.JSON)
+        assert isinstance(result, dict)
+
+    def test_json_default_format(self) -> None:
+        ev = _event()
+        assert ev.to_dict() == ev.to_dict(SerializationFormat.JSON)
+
+    def test_json_contains_all_fields(self) -> None:
+        ev = _event()
+        d = ev.to_dict()  # type: ignore[assignment]
+        for field_name in (
+            "event_id", "sequence", "timestamp_ns", "action",
+            "principal", "resource", "resource_id", "outcome",
+            "correlation_id", "context", "checksum",
+        ):
+            assert field_name in d, f"Missing field: {field_name}"
+
+    def test_json_principal_sub_dict(self) -> None:
+        ev = _event()
+        d = ev.to_dict()  # type: ignore[assignment]
+        assert d["principal"]["subject"] == _P.subject  # type: ignore[index]
+        assert d["principal"]["auth_method"] == _P.auth_method  # type: ignore[index]
+
+    def test_json_round_trip_verify(self) -> None:
+        import json
+
+        ev = _event()
+        raw = json.dumps(ev.to_dict())
+        data = json.loads(raw)
+        reconstructed = AuditEvent(
+            event_id=data["event_id"],
+            sequence=data["sequence"],
+            timestamp_ns=data["timestamp_ns"],
+            action=data["action"],
+            principal=Principal(
+                subject=data["principal"]["subject"],
+                auth_method=data["principal"]["auth_method"],
+                metadata=data["principal"]["metadata"],
+            ),
+            resource=data["resource"],
+            resource_id=data["resource_id"],
+            outcome=data["outcome"],
+            correlation_id=data["correlation_id"],
+            context=data["context"],
+            checksum=data["checksum"],
+        )
+        assert reconstructed.verify()
+
+    def test_msgpack_returns_bytes(self) -> None:
+        pytest.importorskip("msgpack")
+        ev = _event()
+        result = ev.to_dict(SerializationFormat.MSGPACK)
+        assert isinstance(result, bytes)
+
+    def test_msgpack_missing_raises_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _block_msgpack(name: str, *args: object, **kwargs: object) -> object:
+            if name == "msgpack":
+                raise ImportError("no module named msgpack")
+            return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(builtins, "__import__", _block_msgpack)
+        ev = _event()
+        with pytest.raises(ImportError, match="msgpack"):
+            ev.to_dict(SerializationFormat.MSGPACK)
+
+
+# ===========================================================================
+# AuditEvent.to_ocsf
+# ===========================================================================
+
+
+class TestToOcsf:
+    def test_returns_dict(self) -> None:
+        assert isinstance(_event().to_ocsf(), dict)
+
+    def test_class_uid(self) -> None:
+        assert _event().to_ocsf()["class_uid"] == 6003
+
+    def test_success_status(self) -> None:
+        ev = _event(outcome="success")
+        ocsf = ev.to_ocsf()
+        assert ocsf["status"] == "success"
+        assert ocsf["status_id"] == 1
+
+    def test_failure_status(self) -> None:
+        ev = _event(outcome="failure")
+        ocsf = ev.to_ocsf()
+        assert ocsf["status"] == "failure"
+        assert ocsf["status_id"] == 2
+
+    def test_actor_mapping(self) -> None:
+        ev = _event()
+        actor = ev.to_ocsf()["actor"]
+        assert actor["user"]["name"] == _P.subject
+        assert actor["idp"]["name"] == _P.auth_method
+
+    def test_metadata_uid_is_event_id(self) -> None:
+        ev = _event()
+        assert ev.to_ocsf()["metadata"]["uid"] == ev.event_id
+
+    def test_resource_mapping(self) -> None:
+        ev = _event(resource="document", resource_id="doc-42")
+        resources = ev.to_ocsf()["resources"]
+        assert resources[0]["type"] == "document"
+        assert resources[0]["uid"] == "doc-42"
+
+
+# ===========================================================================
+# aemit
+# ===========================================================================
+
+
+class TestAemit:
+    def test_aemit_returns_true(self) -> None:
+        stream = _CapturingStream()
+        ev = _event(stream)
+        result = asyncio.run(stream.aemit(ev))
+        assert result is True
+
+    def test_aemit_calls_emit(self) -> None:
+        stream = _CapturingStream()
+        ev = _event()
+        asyncio.run(stream.aemit(ev))
+        assert ev in stream.events
+
+    def test_aemit_is_awaitable(self) -> None:
+        stream = _CapturingStream()
+        ev = _event()
+        coro = stream.aemit(ev)
+        assert asyncio.iscoroutine(coro)
+        asyncio.run(coro)
+
+
+# ===========================================================================
+# Middleware / AuditPipeline
+# ===========================================================================
+
+
+class TestRedactionMiddleware:
+    def test_redacts_email(self) -> None:
+        mw = RedactionMiddleware()
+        stream = _CapturingStream()
+        ev = _event(stream, email="user@example.com")
+        result = mw.process(ev)
+        assert result is not None
+        assert "user@example.com" not in result.context.get("email", "")
+        assert "[REDACTED-EMAIL]" in result.context.get("email", "")
+
+    def test_redacts_ssn(self) -> None:
+        mw = RedactionMiddleware()
+        stream = _CapturingStream()
+        ev = _event(stream, ssn="123-45-6789")
+        result = mw.process(ev)
+        assert result is not None
+        assert "123-45-6789" not in result.context.get("ssn", "")
+        assert "[REDACTED-SSN]" in result.context.get("ssn", "")
+
+    def test_unchanged_event_returned_as_is(self) -> None:
+        mw = RedactionMiddleware()
+        ev = _event()
+        result = mw.process(ev)
+        assert result is ev  # same object - no copy
+
+    def test_redacted_event_passes_verify(self) -> None:
+        mw = RedactionMiddleware()
+        ev = _event(email="user@example.com")
+        result = mw.process(ev)
+        assert result is not None
+        assert result.verify()
+
+    def test_custom_patterns(self) -> None:
+        patterns = [(re.compile(r"\d+"), "[NUM]")]
+        mw = RedactionMiddleware(patterns=patterns)
+        ev = _event(ip="192.168.1.1")
+        result = mw.process(ev)
+        assert result is not None
+        assert result.context["ip"] == "[NUM].[NUM].[NUM].[NUM]"
+
+    def test_non_string_values_unchanged(self) -> None:
+        mw = RedactionMiddleware()
+        ev = _event(count=42)
+        result = mw.process(ev)
+        assert result is not None
+        assert result.context["count"] == 42  # type: ignore[comparison-overlap]
+
+
+class TestEnrichmentMiddleware:
+    def test_injects_fields(self) -> None:
+        mw = EnrichmentMiddleware(env="prod", region="us-east-1")
+        ev = _event()
+        result = mw.process(ev)
+        assert result is not None
+        assert result.context["env"] == "prod"
+        assert result.context["region"] == "us-east-1"
+
+    def test_does_not_overwrite_existing(self) -> None:
+        stream = _CapturingStream()
+        ev = stream.record("op", principal=_P, resource="r", env="existing")
+        mw = EnrichmentMiddleware(env="injected")
+        result = mw.process(ev)
+        assert result is not None
+        assert result.context["env"] == "existing"
+
+    def test_no_extra_fields_returns_same(self) -> None:
+        ev = _event(env="prod")
+        mw = EnrichmentMiddleware(env="prod")
+        # All keys already present - no change expected (env already in context)
+        result = mw.process(ev)
+        assert result is ev
+
+    def test_enriched_event_passes_verify(self) -> None:
+        mw = EnrichmentMiddleware(env="prod")
+        ev = _event()
+        result = mw.process(ev)
+        assert result is not None
+        assert result.verify()
+
+
+class TestAuditPipeline:
+    def test_emit_forwards_to_streams(self) -> None:
+        backend = _CapturingStream()
+        pipeline = AuditPipeline(backend)
+        ev = _event()
+        pipeline.emit(ev)
+        assert ev in backend.events
+
+    def test_record_via_pipeline(self) -> None:
+        backend = _CapturingStream()
+        pipeline = AuditPipeline(backend)
+        ev = pipeline.record("login", principal=_P, resource="session")
+        assert ev in backend.events
+        assert ev.verify()
+
+    def test_middleware_applied(self) -> None:
+        backend = _CapturingStream()
+        pipeline = AuditPipeline(backend).add(
+            EnrichmentMiddleware(env="test")
+        )
+        pipeline.record("op", principal=_P, resource="r")
+        assert backend.events[0].context["env"] == "test"
+
+    def test_chaining_returns_pipeline(self) -> None:
+        pipeline = AuditPipeline(_CapturingStream())
+        result = pipeline.add(RedactionMiddleware())
+        assert result is pipeline
+
+    def test_middleware_drop(self) -> None:
+        class _Dropper:
+            def process(self, event: AuditEvent) -> AuditEvent | None:
+                return None
+
+        backend = _CapturingStream()
+        pipeline = AuditPipeline(backend).add(_Dropper())
+        pipeline.record("op", principal=_P, resource="r")
+        assert len(backend.events) == 0
+
+    def test_multiple_backends(self) -> None:
+        b1, b2 = _CapturingStream(), _CapturingStream()
+        pipeline = AuditPipeline(b1, b2)
+        pipeline.record("op", principal=_P, resource="r")
+        assert len(b1.events) == 1
+        assert len(b2.events) == 1
+
+    def test_health_check_all_healthy(self) -> None:
+        pipeline = AuditPipeline(_CapturingStream(), _CapturingStream())
+        status = pipeline.health_check()
+        assert status.healthy is True
+
+    def test_health_check_no_backends(self) -> None:
+        pipeline = AuditPipeline()
+        status = pipeline.health_check()
+        assert status.healthy is True
+
+    def test_supports_feature_any_backend(self) -> None:
+        class _AsyncStream(_CapturingStream):
+            def supports_feature(self, feature: StreamFeature) -> bool:
+                return feature == StreamFeature.ASYNC
+
+        pipeline = AuditPipeline(_CapturingStream(), _AsyncStream())
+        assert pipeline.supports_feature(StreamFeature.ASYNC) is True
+        assert pipeline.supports_feature(StreamFeature.QUERY) is False
+
+    def test_aemit_through_pipeline(self) -> None:
+        backend = _CapturingStream()
+        pipeline = AuditPipeline(backend)
+        ev = _event()
+
+        result = asyncio.run(pipeline.aemit(ev))
+        assert result is True
+        assert ev in backend.events
+
+    def test_aemit_drop_returns_false(self) -> None:
+        class _Dropper:
+            def process(self, event: AuditEvent) -> AuditEvent | None:
+                return None
+
+        pipeline = AuditPipeline(_CapturingStream()).add(_Dropper())
+        ev = _event()
+        result = asyncio.run(pipeline.aemit(ev))
+        assert result is False
+
+
+# ===========================================================================
+# LoggingAdapter
+# ===========================================================================
+
+
+class TestLoggingAdapter:
+    def _make_adapter(self) -> tuple[LoggingAdapter, list[logging.LogRecord]]:
+        records: list[logging.LogRecord] = []
+
+        class _Handler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        log = logging.getLogger(f"test_airlog.{id(self)}")
+        log.addHandler(_Handler())
+        log.setLevel(logging.DEBUG)
+        return LoggingAdapter(logger=log), records
+
+    def test_emit_produces_log_record(self) -> None:
+        adapter, records = self._make_adapter()
+        ev = _event()
+        adapter.emit(ev)
+        assert len(records) == 1
+
+    def test_record_fields_in_extra(self) -> None:
+        adapter, records = self._make_adapter()
+        ev = _event()
+        adapter.emit(ev)
+        record = records[0]
+        assert record.audit_event_id == ev.event_id  # type: ignore[attr-defined]
+        assert record.audit_action == ev.action  # type: ignore[attr-defined]
+        assert record.audit_outcome == ev.outcome  # type: ignore[attr-defined]
+
+    def test_default_level_is_info(self) -> None:
+        adapter, records = self._make_adapter()
+        ev = _event()
+        adapter.emit(ev)
+        assert records[0].levelno == logging.INFO
+
+    def test_custom_level(self) -> None:
+        records: list[logging.LogRecord] = []
+
+        class _Handler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        log = logging.getLogger(f"test_airlog.custom.{id(self)}")
+        log.addHandler(_Handler())
+        log.setLevel(logging.DEBUG)
+        adapter = LoggingAdapter(logger=log, level=logging.WARNING)
+        adapter.emit(_event())
+        assert records[0].levelno == logging.WARNING
+
+    def test_health_check_with_handler(self) -> None:
+        adapter, _ = self._make_adapter()
+        status = adapter.health_check()
+        assert status.healthy is True
+
+    def test_health_check_no_handler(self) -> None:
+        bare_log = logging.getLogger(f"test_airlog.bare.{id(self)}")
+        # Ensure no handlers and no propagation to root
+        bare_log.handlers = []
+        bare_log.propagate = False
+        adapter = LoggingAdapter(logger=bare_log)
+        status = adapter.health_check()
+        assert status.healthy is False
+
+    def test_supports_feature_all_false(self) -> None:
+        adapter, _ = self._make_adapter()
+        for feature in StreamFeature:
+            assert adapter.supports_feature(feature) is False
+
+    def test_stream_record_calls_emit(self) -> None:
+        adapter, records = self._make_adapter()
+        adapter.record("login", principal=_P, resource="session")
+        assert len(records) == 1
+
+
+# ===========================================================================
+# OpenTelemetryAdapter
+# ===========================================================================
+
+
+class TestOpenTelemetryAdapter:
+    def test_raises_import_error_without_otel(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _block_otel(name: str, *args: object, **kwargs: object) -> object:
+            if name.startswith("opentelemetry"):
+                raise ImportError("no module named opentelemetry")
+            return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(builtins, "__import__", _block_otel)
+
+        from airlog.adapters.opentelemetry_adapter import OpenTelemetryAdapter as _Adapter
+
+        with pytest.raises(ImportError, match="opentelemetry-api"):
+            _Adapter()
+
+    def test_supports_async_feature(self) -> None:
+        pytest.importorskip("opentelemetry")
+        from airlog.adapters import OpenTelemetryAdapter
+
+        adapter = OpenTelemetryAdapter()
+        assert adapter.supports_feature(StreamFeature.ASYNC) is True
+        assert adapter.supports_feature(StreamFeature.QUERY) is False
+
+    def test_health_check_with_otel(self) -> None:
+        pytest.importorskip("opentelemetry")
+        from airlog.adapters import OpenTelemetryAdapter
+
+        adapter = OpenTelemetryAdapter()
+        status = adapter.health_check()
+        assert status.healthy is True
+
+    def test_aemit_is_sync_and_returns_true(self) -> None:
+        pytest.importorskip("opentelemetry")
+        from airlog.adapters import OpenTelemetryAdapter
+
+        adapter = OpenTelemetryAdapter()
+        ev = _event()
+        result = asyncio.run(adapter.aemit(ev))
+        assert result is True
+
+
+# ===========================================================================
+# Registry
+# ===========================================================================
+
+
+class TestRegistry:
+    def setup_method(self) -> None:
+        # Clear registry state before each test
+        for name in list(registry.list_backends()):
+            registry.deregister(name)
+
+    def test_register_and_list(self) -> None:
+        stream = _CapturingStream()
+        registry.register("test", stream)
+        assert "test" in registry.list_backends()
+
+    def test_list_returns_snapshot(self) -> None:
+        stream = _CapturingStream()
+        registry.register("snap", stream)
+        snapshot = registry.list_backends()
+        registry.deregister("snap")
+        assert "snap" in snapshot  # snapshot not affected
+
+    def test_deregister_removes(self) -> None:
+        registry.register("temp", _CapturingStream())
+        registry.deregister("temp")
+        assert "temp" not in registry.list_backends()
+
+    def test_deregister_missing_raises_key_error(self) -> None:
+        with pytest.raises(KeyError):
+            registry.deregister("nonexistent")
+
+    def test_emit_all_backends(self) -> None:
+        a, b = _CapturingStream(), _CapturingStream()
+        registry.register("a", a)
+        registry.register("b", b)
+        ev = _event()
+        results = registry.emit(ev)
+        assert results == {"a": True, "b": True}
+        assert ev in a.events
+        assert ev in b.events
+
+    def test_emit_named_subset(self) -> None:
+        a, b = _CapturingStream(), _CapturingStream()
+        registry.register("a", a)
+        registry.register("b", b)
+        ev = _event()
+        results = registry.emit(ev, backends=["a"])
+        assert "a" in results
+        assert "b" not in results
+        assert ev in a.events
+        assert ev not in b.events
+
+    def test_emit_predicate(self) -> None:
+        a, b = _CapturingStream(), _CapturingStream()
+        registry.register("primary", a)
+        registry.register("secondary", b)
+        ev = _event()
+        results = registry.emit(ev, backends=lambda n, _: n.startswith("primary"))
+        assert "primary" in results
+        assert "secondary" not in results
+
+    def test_emit_error_is_caught(self) -> None:
+        class _FailStream(AuditStream):
+            def emit(self, event: AuditEvent) -> None:
+                raise RuntimeError("storage unavailable")
+
+        registry.register("failing", _FailStream())
+        ev = _event()
+        results = registry.emit(ev)
+        assert results["failing"] is False
+
+    def test_aemit_all_backends(self) -> None:
+        a, b = _CapturingStream(), _CapturingStream()
+        registry.register("a", a)
+        registry.register("b", b)
+        ev = _event()
+        results = asyncio.run(registry.aemit(ev))
+        assert results == {"a": True, "b": True}
+
+    def test_aemit_named_subset(self) -> None:
+        a, b = _CapturingStream(), _CapturingStream()
+        registry.register("a", a)
+        registry.register("b", b)
+        ev = _event()
+        results = asyncio.run(registry.aemit(ev, backends=["b"]))
+        assert "b" in results
+        assert "a" not in results
+
+    def test_thread_safe_register(self) -> None:
+        n = 20
+        streams = [_CapturingStream() for _ in range(n)]
+        threads = [
+            threading.Thread(target=registry.register, args=(f"t{i}", streams[i]))
+            for i in range(n)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        backends = registry.list_backends()
+        assert all(f"t{i}" in backends for i in range(n))
+
+
+# ===========================================================================
+# BackendComplianceTest base class - verified with _CapturingStream
+# ===========================================================================
+
+
+class TestBackendComplianceConcreteImpl(BackendComplianceTest):
+    """Run the full compliance suite against the in-memory _CapturingStream."""
+
+    @pytest.fixture
+    def stream(self) -> _CapturingStream:
+        return _CapturingStream()
