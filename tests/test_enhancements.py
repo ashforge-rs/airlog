@@ -964,6 +964,42 @@ class TestOcsfStream:
         stream, _ = self._make_stream()
         assert stream.health_check().healthy is True
 
+    def test_health_check_unhealthy_sink(self) -> None:
+        # A closed StringIO is not writable
+        buf = io.StringIO()
+        buf.close()
+        stream = OcsfStream(sink=buf)
+        status = stream.health_check()
+        assert status.healthy is False
+        assert status.message != ""
+
+    def test_supports_feature_returns_false(self) -> None:
+        stream, _ = self._make_stream()
+        for feature in StreamFeature:
+            assert stream.supports_feature(feature) is False
+
+    def test_validate_emits_warning_for_missing_field(self) -> None:
+        import warnings
+
+        buf = io.StringIO()
+        stream = OcsfStream(sink=buf, validate=True)
+        # Monkeypatch validate_ocsf_event to return an error
+        import airlog.adapters.ocsf_adapter as _mod
+
+        original = _mod.validate_ocsf_event
+
+        def _fake_validate(d: object, schema_version: str = "") -> list[str]:
+            return ["Missing required field 'time'"]
+
+        _mod.validate_ocsf_event = _fake_validate
+        try:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                stream.record("create", principal=_P, resource="doc")
+            assert any("OCSF validation" in str(w.message) for w in caught)
+        finally:
+            _mod.validate_ocsf_event = original
+
     def test_validate_raises_without_ocsf_lib(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import builtins
 
@@ -977,3 +1013,290 @@ class TestOcsfStream:
         monkeypatch.setattr(builtins, "__import__", mock_import)
         with pytest.raises(ImportError, match="ocsf-lib"):
             OcsfStream(validate=True)
+
+
+# ===========================================================================
+# Extra coverage gaps
+# ===========================================================================
+
+
+class TestStreamsModule:
+    """Ensure airlog.streams re-exports are importable (covers streams.py)."""
+
+    def test_imports(self) -> None:
+        from airlog.streams import (  # noqa: F401
+            AuditEvent,
+            AuditStream,
+            HealthStatus,
+            Principal,
+            SerializationFormat,
+            StreamFeature,
+        )
+
+
+class TestInterfacesMiscCoverage:
+    def test_health_check_exception_branch(self) -> None:
+        """AuditStream.health_check() exception branch."""
+
+        class _BrokenLockStream(AuditStream):
+            def __init__(self) -> None:
+                super().__init__()
+                # Replace the lock with a mock that raises on acquire
+                self._lock = None  # type: ignore[assignment]
+
+            def emit(self, event: AuditEvent) -> None:
+                pass
+
+        stream = _BrokenLockStream()
+        status = stream.health_check()
+        assert status.healthy is False
+
+    def test_msgpack_import_error(self) -> None:
+        import builtins
+
+        real_import = builtins.__import__
+        ev = _CapturingStream().record("x", principal=_P, resource="r")
+
+        def mock_import(name: str, *args: object, **kwargs: object) -> object:
+            if name == "msgpack":
+                raise ImportError("no msgpack")
+            return real_import(name, *args, **kwargs)
+
+        import builtins as _bi
+
+        _bi.__import__ = mock_import
+        try:
+            with pytest.raises(ImportError, match="msgpack"):
+                ev.to_dict(SerializationFormat.MSGPACK)
+        finally:
+            _bi.__import__ = real_import
+
+
+class TestLoggingAdapterCoverage:
+    def test_health_check_no_handlers(self) -> None:
+        """LoggingAdapter.health_check() returns unhealthy when no handlers."""
+        isolated = logging.getLogger("airlog.test.no_handlers_xyz")
+        # Ensure no handlers and propagation is disabled
+        isolated.handlers = []
+        isolated.propagate = False
+        adapter = LoggingAdapter(logger=isolated)
+        status = adapter.health_check()
+        assert status.healthy is False
+        assert "no handlers" in status.message
+
+
+class TestMiddlewareCoverage:
+    def test_pipeline_health_check_unhealthy_backend(self) -> None:
+        class _UnhealthyStream(AuditStream):
+            def emit(self, event: AuditEvent) -> None:
+                pass
+
+            def health_check(self) -> HealthStatus:
+                return HealthStatus(healthy=False, latency_ms=1.0, message="broken")
+
+        pipeline = AuditPipeline(_UnhealthyStream())
+        status = pipeline.health_check()
+        assert status.healthy is False
+        assert "broken" in status.message
+
+
+class TestRegistryCoverage:
+    def setup_method(self) -> None:
+        for name in list(registry.list_backends()):
+            registry.deregister(name)
+
+    def test_emit_sync_or_async_sync_path(self) -> None:
+        from airlog.registry import emit_sync_or_async
+
+        stream = _CapturingStream()
+        registry.register("s", stream)
+        ev = stream.record("x", principal=_P, resource="r")
+        result = emit_sync_or_async(ev)
+        assert isinstance(result, dict)
+        assert "s" in result
+
+    def test_emit_sync_or_async_async_path(self) -> None:
+        from airlog.registry import emit_sync_or_async
+
+        stream = _CapturingStream()
+        registry.register("s", stream)
+        ev = stream.record("x", principal=_P, resource="r")
+
+        async def _run() -> object:
+            return await emit_sync_or_async(ev)
+
+        result = asyncio.run(_run())
+        assert isinstance(result, dict)
+
+    def test_select_backends_unknown_type_returns_empty(self) -> None:
+        """_select_backends with an unsupported type returns []."""
+        from airlog.registry import _select_backends
+
+        stream = _CapturingStream()
+        registry.register("x", stream)
+        snapshot = list(registry.list_backends().items())
+        result = _select_backends(42, snapshot)  # type: ignore[arg-type]
+        assert result == []
+
+    def test_aemit_exception_caught(self) -> None:
+        class _FailAsync(AuditStream):
+            def emit(self, event: AuditEvent) -> None:
+                pass
+
+            async def aemit(self, event: AuditEvent) -> bool:
+                raise RuntimeError("async fail")
+
+        registry.register("fa", _FailAsync())
+        stream = _CapturingStream()
+        registry.register("ok", stream)
+        ev = stream.record("x", principal=_P, resource="r")
+        result = asyncio.run(registry.aemit(ev))
+        assert result["fa"] is False
+        assert result["ok"] is True
+
+
+class TestOcsfSupportCoverage:
+    def _event(self, action: str = "create") -> AuditEvent:
+        return _CapturingStream().record(action, principal=_P, resource="role", resource_id="r-1")
+
+    def test_entity_management_class(self) -> None:
+        ev = self._event("update")
+        result = build_ocsf_event(ev, ocsf_class=OcsfClass.ENTITY_MANAGEMENT)
+        assert result["class_uid"] == 3004
+        assert "entity" in result
+        assert result["entity"]["type"] == "role"
+
+    def test_entity_management_activity_id(self) -> None:
+        ev = self._event("delete")
+        result = build_ocsf_event(ev, ocsf_class=OcsfClass.ENTITY_MANAGEMENT)
+        assert result["activity_id"] == 4
+
+    def test_entity_management_unknown_activity_is_99(self) -> None:
+        ev = self._event("frobnicate")
+        result = build_ocsf_event(ev, ocsf_class=OcsfClass.ENTITY_MANAGEMENT)
+        assert result["activity_id"] == 99
+
+    def test_validate_uses_cached_schema(self) -> None:
+        from airlog.ocsf_support import _schema_cache
+
+        ev = self._event()
+        ocsf = build_ocsf_event(ev)
+        # First call populates cache; second call should use it
+        validate_ocsf_event(ocsf)
+        validate_ocsf_event(ocsf)
+        assert "1.1.0" in _schema_cache
+
+    def test_validate_importerror_without_ocsf_lib(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import builtins
+
+        real_import = builtins.__import__
+
+        def mock_import(name: str, *args: object, **kwargs: object) -> object:
+            if name.startswith("ocsf"):
+                raise ImportError("no ocsf-lib")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", mock_import)
+        with pytest.raises(ImportError, match="ocsf-lib"):
+            validate_ocsf_event({})
+
+
+class TestOpenTelemetryAdapterCoverage:
+    """Cover the OTel adapter using unittest.mock to avoid real OTel deps."""
+
+    def _make_adapter(self) -> object:
+        from airlog.adapters import OpenTelemetryAdapter
+
+        return OpenTelemetryAdapter()
+
+    def test_init_raises_without_opentelemetry(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import builtins
+
+        real_import = builtins.__import__
+
+        def mock_import(name: str, *args: object, **kwargs: object) -> object:
+            if name.startswith("opentelemetry"):
+                raise ImportError("no otel")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", mock_import)
+        from airlog.adapters.opentelemetry_adapter import OpenTelemetryAdapter
+
+        with pytest.raises(ImportError, match="opentelemetry-api"):
+            OpenTelemetryAdapter()
+
+    def test_emit_adds_event_to_recording_span(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        adapter = self._make_adapter()
+        mock_span = MagicMock()
+        mock_span.is_recording.return_value = True
+
+        ev = _CapturingStream().record("login", principal=_P, resource="session")
+        with patch("opentelemetry.trace.get_current_span", return_value=mock_span):
+            adapter.emit(ev)  # type: ignore[union-attr]
+
+        mock_span.add_event.assert_called_once()
+
+    def test_emit_with_tracer_creates_span_when_no_active(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        mock_tracer = MagicMock()
+        mock_span = MagicMock()
+        mock_span.is_recording.return_value = False
+        mock_tracer.start_as_current_span.return_value.__enter__ = MagicMock(return_value=mock_span)
+        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(return_value=False)
+
+        from airlog.adapters.opentelemetry_adapter import OpenTelemetryAdapter
+
+        adapter = OpenTelemetryAdapter(tracer=mock_tracer)
+        ev = _CapturingStream().record("create", principal=_P, resource="doc")
+
+        non_recording = MagicMock()
+        non_recording.is_recording.return_value = False
+
+        with patch("opentelemetry.trace.get_current_span", return_value=non_recording):
+            adapter.emit(ev)
+
+        mock_tracer.start_as_current_span.assert_called_once_with("audit_event")
+
+    def test_emit_no_tracer_no_active_span_is_noop(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        adapter = self._make_adapter()
+        non_recording = MagicMock()
+        non_recording.is_recording.return_value = False
+
+        ev = _CapturingStream().record("create", principal=_P, resource="doc")
+        with patch("opentelemetry.trace.get_current_span", return_value=non_recording):
+            adapter.emit(ev)  # type: ignore[union-attr]
+        # no exception = pass
+
+    def test_health_check_healthy(self) -> None:
+        adapter = self._make_adapter()
+        status = adapter.health_check()  # type: ignore[union-attr]
+        assert status.healthy is True
+
+    def test_supports_feature_async_true(self) -> None:
+        adapter = self._make_adapter()
+        assert adapter.supports_feature(StreamFeature.ASYNC) is True  # type: ignore[union-attr]
+
+    def test_supports_feature_non_async_false(self) -> None:
+        adapter = self._make_adapter()
+        for feature in StreamFeature:
+            if feature != StreamFeature.ASYNC:
+                assert adapter.supports_feature(feature) is False  # type: ignore[union-attr]
+
+    def test_aemit_calls_emit(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        adapter = self._make_adapter()
+        mock_span = MagicMock()
+        mock_span.is_recording.return_value = True
+
+        ev = _CapturingStream().record("login", principal=_P, resource="session")
+        with patch("opentelemetry.trace.get_current_span", return_value=mock_span):
+            result = asyncio.run(adapter.aemit(ev))  # type: ignore[union-attr]
+
+        assert result is True
+        mock_span.add_event.assert_called_once()
