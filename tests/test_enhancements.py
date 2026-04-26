@@ -123,9 +123,17 @@ class TestToDict:
         ev = _event()
         d = ev.to_dict()  # type: ignore[assignment]
         for field_name in (
-            "event_id", "sequence", "timestamp_ns", "action",
-            "principal", "resource", "resource_id", "outcome",
-            "correlation_id", "context", "checksum",
+            "event_id",
+            "sequence",
+            "timestamp_ns",
+            "action",
+            "principal",
+            "resource",
+            "resource_id",
+            "outcome",
+            "correlation_id",
+            "context",
+            "checksum",
         ):
             assert field_name in d, f"Missing field: {field_name}"
 
@@ -351,9 +359,7 @@ class TestAuditPipeline:
 
     def test_middleware_applied(self) -> None:
         backend = _CapturingStream()
-        pipeline = AuditPipeline(backend).add(
-            EnrichmentMiddleware(env="test")
-        )
+        pipeline = AuditPipeline(backend).add(EnrichmentMiddleware(env="test"))
         pipeline.record("op", principal=_P, resource="r")
         assert backend.events[0].context["env"] == "test"
 
@@ -638,8 +644,7 @@ class TestRegistry:
         n = 20
         streams = [_CapturingStream() for _ in range(n)]
         threads = [
-            threading.Thread(target=registry.register, args=(f"t{i}", streams[i]))
-            for i in range(n)
+            threading.Thread(target=registry.register, args=(f"t{i}", streams[i])) for i in range(n)
         ]
         for t in threads:
             t.start()
