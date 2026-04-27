@@ -213,9 +213,7 @@ class BatchEnvelope:
         if not events:
             raise ValueError("Cannot create BatchEnvelope from an empty event list.")
         seqs = [e.sequence for e in events]
-        batch_checksum = hashlib.sha256(
-            "".join(e.checksum for e in events).encode()
-        ).hexdigest()
+        batch_checksum = hashlib.sha256("".join(e.checksum for e in events).encode()).hexdigest()
         return cls(
             batch_id=str(uuid.uuid4()),
             first_seq=min(seqs),
@@ -265,9 +263,7 @@ class BatchEnvelope:
         seqs = [e.sequence for e in self.events]
         if min(seqs) != self.first_seq or max(seqs) != self.last_seq:
             return False
-        expected = hashlib.sha256(
-            "".join(e.checksum for e in self.events).encode()
-        ).hexdigest()
+        expected = hashlib.sha256("".join(e.checksum for e in self.events).encode()).hexdigest()
         return expected == self.batch_checksum
 
 
@@ -372,9 +368,7 @@ class BufferedStream(AuditStream):
         if self._wal_conn is None:
             return
         with self._wal_lock:
-            cursor = self._wal_conn.execute(
-                "SELECT id, event_json FROM wal_events ORDER BY id"
-            )
+            cursor = self._wal_conn.execute("SELECT id, event_json FROM wal_events ORDER BY id")
             rows: list[tuple[int, str]] = cursor.fetchall()
 
         for wal_id, event_json in rows:
@@ -451,11 +445,7 @@ class BufferedStream(AuditStream):
                 self._buffer.append((wal_id, event))
                 self._buffer_bytes += estimated_bytes
                 current_count = len(self._buffer)
-                pct = (
-                    current_count / self._max_buffer_size
-                    if self._max_buffer_size > 0
-                    else 0.0
-                )
+                pct = current_count / self._max_buffer_size if self._max_buffer_size > 0 else 0.0
                 needs_flush = current_count >= self._max_buffer_size
                 needs_alert = pct >= self._WARNING_THRESHOLD
             else:
@@ -473,9 +463,7 @@ class BufferedStream(AuditStream):
         if needs_alert:
             self._emit_alert(pct)
         if needs_flush:
-            threading.Thread(
-                target=self.flush_sync, daemon=True, name="airlog-flush"
-            ).start()
+            threading.Thread(target=self.flush_sync, daemon=True, name="airlog-flush").start()
 
     # ------------------------------------------------------------------
     # Overflow / error handling
@@ -649,9 +637,7 @@ class BufferedStream(AuditStream):
             byte_count = self._buffer_bytes
 
         size_pct = count / self._max_buffer_size if self._max_buffer_size > 0 else 0.0
-        byte_pct = (
-            byte_count / self._max_buffer_bytes if self._max_buffer_bytes > 0 else 0.0
-        )
+        byte_pct = byte_count / self._max_buffer_bytes if self._max_buffer_bytes > 0 else 0.0
         pct = min(max(size_pct, byte_pct), 1.0)
 
         if pct >= 1.0:
