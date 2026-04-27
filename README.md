@@ -104,6 +104,30 @@ fields are stored under `record.extra`:
 }
 ```
 
+## Examples
+
+Comprehensive examples are available in the [`examples/`](examples/) directory:
+
+- **Basic Usage**: Simple getting started examples with various adapters
+- **Pipeline & Middleware**: Building pipelines with enrichment and redaction
+- **Context Tracking**: Automatic event enrichment using audit contexts
+- **Metrics & Monitoring**: Collecting metrics from audit events
+- **Policy & Routing**: Policy-based event routing to different streams
+- **Integrity & Verification**: Tamper detection and integrity checking
+- **Retention Management**: Configuring retention rules and automatic cleanup
+- **Backend Adapters**: OCSF format and OpenTelemetry integration
+- **Registry**: Using the global pipeline registry
+
+Run any example:
+
+```bash
+python examples/basic_usage.py
+# or
+uv run examples/basic_usage.py
+```
+
+See [`examples/README.md`](examples/README.md) for the complete list and details.
+
 ## Development
 
 ```bash

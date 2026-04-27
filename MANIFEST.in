@@ -1,0 +1,17 @@
+# Exclude examples from source distribution
+exclude examples/*
+
+# Exclude development and CI files
+exclude .gitignore
+exclude .pre-commit-config.yaml
+recursive-exclude .github *
+recursive-exclude .vscode *
+
+# Exclude test files
+recursive-exclude tests *
+
+# Include important files
+include LICENSE
+include README.md
+include SECURITY.md
+include pyproject.toml
