@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from enum import Enum, auto
 from typing import Any
 
+from airlog.ocsf_support import OcsfClass, OcsfSeverity, build_ocsf_event
 from airlog.serialization import SerializationFormat
 
 __all__ = [
@@ -305,65 +306,37 @@ class AuditEvent:
                     ) from exc
                 return msgpack.packb(self._as_dict(), use_bin_type=True)
 
-    def to_ocsf(self) -> dict[str, Any]:
-        """Map this event to an `OCSF <https://schema.ocsf.io>`_ API Activity record.
+    def to_ocsf(
+        self,
+        ocsf_class: OcsfClass | None = None,
+        severity_id: int = OcsfSeverity.INFORMATIONAL,
+    ) -> dict[str, Any]:
+        """Map this event to an OCSF-compliant event dictionary.
 
-        The returned dictionary conforms to **OCSF class 6003 – API Activity**,
-        which is the closest standard class for generic audit events.  Callers
-        working with Security Finding events (class 2001) can post-process the
-        result as needed.
+        The OCSF class is inferred from the action string by default:
+
+        * Login/logout actions → **class 3002** (Authentication)
+        * User/account lifecycle actions → **class 3001** (Account Change)
+        * Everything else → **class 6003** (API Activity, the safe default)
+
+        Override *ocsf_class* to force a specific class regardless of the
+        action.
+
+        Args:
+            ocsf_class: Target :class:`~airlog.ocsf_support.OcsfClass`.
+                ``None`` (default) auto-detects the class from the action.
+            severity_id: OCSF ``severity_id`` integer.  Use
+                :class:`~airlog.ocsf_support.OcsfSeverity` for named
+                constants.  Defaults to ``1`` (Informational).
 
         Returns:
-            A plain Python :class:`dict` whose structure follows the OCSF
-            schema version 1.1.
+            A plain Python :class:`dict` conforming to OCSF schema 1.1.
+
+        See Also:
+            :func:`~airlog.ocsf_support.build_ocsf_event`,
+            :func:`~airlog.ocsf_support.validate_ocsf_event`
         """
-        status_id = 1 if self.outcome == "success" else 2  # 1=Success, 2=Failure
-        return {
-            "class_uid": 6003,
-            "class_name": "API Activity",
-            "category_uid": 6,
-            "category_name": "Application Activity",
-            "activity_id": 1,  # 1=Create as a generic "invoke"
-            "activity_name": self.action,
-            "time": self.timestamp_ns // 1_000_000,  # OCSF uses milliseconds
-            "status": self.outcome,
-            "status_id": status_id,
-            "actor": {
-                "user": {
-                    "name": self.principal.subject,
-                    "type": "User",
-                },
-                "idp": {
-                    "name": self.principal.auth_method,
-                },
-            },
-            "api": {
-                "operation": self.action,
-                "response": {
-                    "code": 200 if self.outcome == "success" else 500,
-                    "message": self.outcome,
-                },
-            },
-            "resources": [
-                {
-                    "type": self.resource,
-                    "uid": self.resource_id,
-                }
-            ],
-            "metadata": {
-                "uid": self.event_id,
-                "correlation_uid": self.correlation_id,
-                "sequence": self.sequence,
-                "log_provider": "airlog",
-                "version": "1.1.0",
-                "product": {
-                    "name": "airlog",
-                    "vendor_name": "airlog",
-                },
-            },
-            "raw_data": self.checksum,
-            "unmapped": self.context,
-        }
+        return build_ocsf_event(self, ocsf_class=ocsf_class, severity_id=severity_id)
 
 
 class AuditStream(ABC):

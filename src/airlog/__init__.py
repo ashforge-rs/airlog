@@ -32,6 +32,7 @@ Phase 2 – ecosystem features::
 from __future__ import annotations
 
 from airlog.adapters.logging_adapter import LoggingAdapter
+from airlog.adapters.ocsf_adapter import OcsfStream
 from airlog.adapters.opentelemetry_adapter import OpenTelemetryAdapter
 from airlog.context import AuditContextData, async_audit_context, audit_context, current_context
 from airlog.integrity import IntegrityVerificationStream, IntegrityViolation, ReplayableStream
@@ -51,6 +52,7 @@ from airlog.retention import (
     RetentionResult,
     RetentionRule,
 )
+from airlog.ocsf_support import OcsfClass, OcsfSeverity
 from airlog.serialization import SerializationFormat
 
 __all__ = [
@@ -67,6 +69,9 @@ __all__ = [
     "LoggingAdapter",
     "LoguruAuditStream",
     "MetricsAuditStream",
+    "OcsfClass",
+    "OcsfSeverity",
+    "OcsfStream",
     "OpenTelemetryAdapter",
     "Policy",
     "PolicyAction",

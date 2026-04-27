@@ -25,16 +25,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=8",
-    "pytest-cov>=5",
-    "ruff>=0.4",
+ocsf = [
+    "ocsf-lib>=0.10",
 ]
 
 [tool.uv]
 
 [dependency-groups]
 dev = [
+    "ocsf-lib>=0.10",
+    "opentelemetry-api>=1.20",
     "pytest>=8",
     "pytest-cov>=5",
     "ruff>=0.4",
