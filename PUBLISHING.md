@@ -5,6 +5,7 @@ This document describes how to publish airlog to PyPI.
 ## Prerequisites
 
 1. Install build tools:
+
    ```bash
    uv add --dev build twine
    ```
@@ -31,6 +32,7 @@ ls -lh dist/
 ```
 
 This will create:
+
 - `dist/airlog-0.1.0.tar.gz` (source distribution)
 - `dist/airlog-0.1.0-py3-none-any.whl` (wheel)
 
@@ -46,6 +48,7 @@ unzip -l dist/airlog-0.1.0-py3-none-any.whl
 ```
 
 Ensure:
+
 - ✓ Examples are NOT included in the wheel
 - ✓ Tests are NOT included in the wheel
 - ✓ Source code is in `airlog/` directory
@@ -106,13 +109,13 @@ index-servers =
     testpypi
 
 [pypi]
-username = __token__
-password = pypi-AgEIcHlwaS5vcmcC...
+username =
+password = 
 
 [testpypi]
 repository = https://test.pypi.org/legacy/
-username = __token__
-password = pypi-AgENdGVzdC5weXBpLm9yZwI...
+username = 
+password = 
 ```
 
 **Important:** Keep this file secure (`chmod 600 ~/.pypirc`)
@@ -122,6 +125,7 @@ password = pypi-AgENdGVzdC5weXBpLm9yZwI...
 For automated publishing via GitHub Actions, see `.github/workflows/publish.yml` (if available).
 
 Store PyPI token as a GitHub secret:
+
 1. Go to repository Settings → Secrets → Actions
 2. Add secret named `PYPI_API_TOKEN`
 3. Paste your PyPI API token
@@ -131,6 +135,7 @@ Store PyPI token as a GitHub secret:
 Before publishing a new version:
 
 1. Update version in `pyproject.toml`:
+
    ```toml
    version = "0.2.0"
    ```
@@ -138,6 +143,7 @@ Before publishing a new version:
 2. Update CHANGELOG (if available)
 
 3. Create a git tag:
+
    ```bash
    git tag -a v0.2.0 -m "Release version 0.2.0"
    git push origin v0.2.0
