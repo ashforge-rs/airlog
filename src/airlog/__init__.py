@@ -45,6 +45,7 @@ from airlog.middleware import (
     EnrichmentMiddleware,
     RedactionMiddleware,
 )
+from airlog.ocsf_support import OcsfClass, OcsfSeverity
 from airlog.policy import DeliveryError, Policy, PolicyAction, PolicyRouter, add_policy
 from airlog.retention import (
     RetentionCapableStream,
@@ -52,7 +53,6 @@ from airlog.retention import (
     RetentionResult,
     RetentionRule,
 )
-from airlog.ocsf_support import OcsfClass, OcsfSeverity
 from airlog.serialization import SerializationFormat
 
 __all__ = [
