@@ -7,3 +7,4 @@ queries:
 # Exclude test files from some query results to reduce noise
 paths-ignore:
   - tests
+  - examples
