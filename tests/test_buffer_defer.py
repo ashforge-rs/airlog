@@ -16,20 +16,18 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import tempfile
-import threading
 import warnings
-from typing import Any
 
 import pytest
 
 from airlog.buffer import (
     BatchEnvelope,
-    BufferHealth,
-    BufferStatus,
     BufferedStream,
+    BufferStatus,
     ErrorPolicy,
     _deserialize_event,
     flush_all,
@@ -131,7 +129,14 @@ class TestBatchEnvelope:
     def test_to_dict_keys(self) -> None:
         evts = self._events(2)
         d = BatchEnvelope.from_events(evts).to_dict()
-        assert set(d) >= {"batch_id", "first_seq", "last_seq", "event_count", "batch_checksum", "events"}
+        assert set(d) >= {
+            "batch_id",
+            "first_seq",
+            "last_seq",
+            "event_count",
+            "batch_checksum",
+            "events",
+        }
         assert len(d["events"]) == 2
 
     def test_verify_fails_wrong_event_count(self) -> None:
@@ -330,6 +335,7 @@ class TestBufferedStreamTimer:
             if sink.events:
                 break
             import time
+
             time.sleep(0.01)
         buf.stop()
         assert len(sink.events) == 1
@@ -366,6 +372,7 @@ class TestBufferedStreamThreshold:
             _record(buf)
         # Give the background flush thread a moment
         import time
+
         time.sleep(0.1)
         assert len(sink.events) == 3
 
@@ -378,7 +385,8 @@ class TestBufferedStreamThreshold:
 class TestErrorPolicyOverflow:
     def _fill_buffer(self, buf: BufferedStream) -> None:
         """Pre-fill the buffer to max capacity via internal state (no threading)."""
-        from airlog.interfaces import AuditEvent, Principal
+        from airlog.interfaces import Principal
+
         p = Principal(subject="s", auth_method="m")
         # Create a dummy event and fill the buffer directly to avoid auto-flush race
         evt = buf.record("seed", principal=p, resource="r")
@@ -449,7 +457,10 @@ class TestErrorPolicyOverflow:
             warnings.simplefilter("always")
             _record(buf)
         buf.flush_sync = original_flush  # restore
-        assert any("retry exhausted" in str(w.message) or "dropping event" in str(w.message) for w in caught)
+        assert any(
+            "retry exhausted" in str(w.message) or "dropping event" in str(w.message)
+            for w in caught
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -587,7 +598,8 @@ class TestWAL:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS wal_events "
-                "(id INTEGER PRIMARY KEY AUTOINCREMENT, event_json TEXT NOT NULL, created_at REAL NOT NULL)"
+                "(id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "event_json TEXT NOT NULL, created_at REAL NOT NULL)"
             )
             conn.execute(
                 "INSERT INTO wal_events (event_json, created_at) VALUES (?, ?)",
@@ -618,9 +630,6 @@ class TestWAL:
         finally:
             with contextlib.suppress(OSError):
                 os.unlink(wal_path)
-
-
-import contextlib
 
 
 # ---------------------------------------------------------------------------
@@ -697,20 +706,18 @@ class TestDeferContext:
     def test_defer_drop_on_exception(self) -> None:
         sink = _Sink()
         buf = _make_buf(sink)
-        with pytest.raises(RuntimeError):
-            with defer_context(on_error=ErrorPolicy.DROP):
-                _record(buf, "gone")
-                raise RuntimeError("boom")
+        with pytest.raises(RuntimeError), defer_context(on_error=ErrorPolicy.DROP):
+            _record(buf, "gone")
+            raise RuntimeError("boom")
         buf.flush_sync()
         assert len(sink.events) == 0
 
     def test_defer_flush_on_exception_with_non_drop_policy(self) -> None:
         sink = _Sink()
         buf = _make_buf(sink)
-        with pytest.raises(ValueError):
-            with defer_context(on_error=ErrorPolicy.PANIC):
-                _record(buf, "kept")
-                raise ValueError("oops")
+        with pytest.raises(ValueError), defer_context(on_error=ErrorPolicy.PANIC):
+            _record(buf, "kept")
+            raise ValueError("oops")
         buf.flush_sync()
         assert len(sink.events) == 1
 
