@@ -1,0 +1,10 @@
+name: "CodeQL Configuration"
+
+# Use the security-and-quality query suite for broader coverage
+queries:
+  - uses: security-and-quality
+
+# Exclude test files from some query results to reduce noise
+paths-ignore:
+  - tests
+  - examples

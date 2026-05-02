@@ -1,0 +1,5 @@
+# Default owners for the repository
+* @ashforge-rs
+
+# CI and release workflows
+.github/workflows/* @ashforge-rs

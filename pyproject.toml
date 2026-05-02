@@ -1,0 +1,145 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "airlog"
+version = "0.1.0"
+description = "Audit logging library with pluggable backends"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["audit", "logging", "loguru", "json", "compliance", "security"]
+authors = [
+    { name = "airlog contributors" }
+]
+maintainers = [
+    { name = "airlog contributors" }
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: System :: Logging",
+    "Topic :: Security",
+]
+dependencies = [
+    "loguru>=0.7",
+]
+
+[project.urls]
+Homepage = "https://github.com/ashforge-rs/airlog"
+Repository = "https://github.com/ashforge-rs/airlog"
+Issues = "https://github.com/ashforge-rs/airlog/issues"
+Changelog = "https://github.com/ashforge-rs/airlog/releases"
+
+[project.optional-dependencies]
+ocsf = [
+    "ocsf-lib>=0.10",
+]
+
+[tool.uv]
+
+[dependency-groups]
+dev = [
+    "ocsf-lib>=0.10",
+    "opentelemetry-api>=1.20",
+    "pytest>=8",
+    "pytest-cov>=5",
+    "pytest-pretty>=1.3.0",
+    "ruff>=0.4",
+    "twine>=5.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/airlog"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "/examples",
+    "/.github",
+    "/.vscode",
+    "/tests",
+]
+
+[tool.ruff]
+src = ["src"]
+target-version = "py311"
+line-length = 100
+exclude = ["examples"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "ANN", # flake8-annotations
+    "S",   # flake8-bandit (security)
+    "C90", # mccabe complexity
+    "N",   # pep8-naming
+    "RUF", # ruff-specific rules
+    "T20", # flake8-print (no print statements)
+]
+ignore = [
+    "ANN401", # Any is intentionally used for flexible sink/context kwargs
+    "RUF002", # EN DASH used intentionally in docstrings for typographic clarity
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101", # assert is idiomatic in pytest tests
+]
+"src/airlog/testing.py" = [
+    "S101", # assert is idiomatic in pytest compliance test base classes
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
+[tool.ruff.lint.isort]
+known-first-party = ["airlog"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = [
+    "--tb=short",
+    "--cov=airlog",
+    "--cov-report=term-missing:skip-covered",
+    "--cov-report=html:.coverage_html",
+    "--cov-fail-under=90",
+]
+
+[tool.coverage.run]
+source = ["airlog"]
+branch = true
+omit = [
+    "*/testing.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+skip_empty = true
+precision = 1
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+    "\\.\\.\\.",
+]
+
+[tool.coverage.html]
+directory = ".coverage_html"
+title = "airlog coverage"
