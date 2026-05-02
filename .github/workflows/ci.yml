@@ -54,7 +54,10 @@ jobs:
 
       - name: Upload coverage report
         uses: codecov/codecov-action@v5
-        if: matrix.python-version == '3.13'
+        if: matrix.python-version == '3.13' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
         with:
           files: ./coverage.xml
           fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
